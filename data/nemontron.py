@@ -2,6 +2,8 @@
 Nemontron dataset (for pretraining)
 https://huggingface.co/datasets/nvidia/Llama-Nemotron-Post-Training-Dataset/
 Using only the SFT subset, using ["code", "math", "science"] splits.
+The total number of tokens is around 200B.
+We use the first shard (0.1B) as validation and the rest as training.
 """
 import os
 import argparse
@@ -80,6 +82,11 @@ def apply_chat_template(sample):
 
 parser = argparse.ArgumentParser(description="Nemontron dataset preprocessing")
 parser.add_argument(
+    "-n", "--num_bins", type=int,
+    default=8,
+    help="Number of .bin files to download. Each file holds up to `shard_size` tokens."
+)
+parser.add_argument(
     "-d", "--dataset_name", type=str, 
     default="nvidia/Llama-Nemotron-Post-Training-Dataset", 
     help="The name of the dataset to load from Hugging Face Hub."
@@ -95,15 +102,24 @@ parser.add_argument(
     help="The local directory to save the data."
 )
 parser.add_argument(
+    "-c", "--data_cache_dir", type=str, 
+    default=".", 
+    help="The local directory to save the data."
+)
+parser.add_argument(
     "-s", "--shard_size", type=int, 
-    default=4 * (10 ** 7), 
+    default=10 ** 8, 
     help="Size of each shard in tokens; usually 1/100 of the dataset size."
 )
+
 
 args = parser.parse_args()
 nprocs = max(1, os.cpu_count() - 2) # don't hog the entire system
 splits = [s.strip() for s in args.split.split(",")]
-DATA_CACHE_DIR = os.path.join(os.path.dirname(__file__), args.local_dir)
+DATA_CACHE_DIR = os.path.join(
+    os.path.expanduser(args.data_cache_dir), 
+    args.local_dir
+)
 os.makedirs(DATA_CACHE_DIR, exist_ok=True)
 
 # ------------------------------------------
@@ -160,6 +176,9 @@ with mp.Pool(nprocs) as pool:
             
         else:
             # write the current shard and start a new one
+            if args.num_bins is not None and shard_index >= args.num_bins:
+                break
+
             split = "val" if shard_index == 0 else "train"  # use the first as val
             filename = os.path.join(
                 DATA_CACHE_DIR, 
@@ -179,7 +198,7 @@ with mp.Pool(nprocs) as pool:
             token_count = len(tokens) - remainder
 
     # write any remaining tokens as the last shard
-    if token_count != 0:
+    if token_count != 0 and (args.num_bins is None or shard_index < args.num_bins):
         split = "val" if shard_index == 0 else "train"
         
         filename = os.path.join(
