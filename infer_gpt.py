@@ -91,9 +91,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ckpt", type=str, default="logs/2025-06-17_15-25-33/state_step001770.pt",
                         help="Path to .pt checkpoint file")
-    parser.add_argument("--prompt", type=str,
-                        default="<|im_start|>user\nYou are given two strings s and t, each of length n and consisting of lowercase Latin alphabets.")
-    parser.add_argument("--max_tokens", type=int, default=100)
+    parser.add_argument(
+        "--prompt",
+        type=str,
+        default="<|im_start|>user\nThere are n children. Each child weighs either 50 kg or 100 kg. A small boat can carry at most k kg in a single trip and must have at least one child on board each time it moves. How many one-way trips are needed, at minimum, to move everyone across the river? If it cannot be done, write −1.\n<|im_end|>\n<|im_start|>assistant\n"
+    )
+    parser.add_argument("--max_tokens", type=int, default=1000)
     args = parser.parse_args()
 
     enc = tiktoken.get_encoding("gpt2")
@@ -111,7 +114,7 @@ def main():
     out_ids = generate(model, prompt_ids, max_new_tokens=args.max_tokens)
 
     decoded = enc.decode([t for t in out_ids.tolist() if t < 50257])
-    print("\n=== Completion ===\n")
+    print("\n=== full completion ===\n")
     print(decoded)
 
 
