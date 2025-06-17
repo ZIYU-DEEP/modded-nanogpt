@@ -51,22 +51,31 @@ def patch_forward_for_inference(model: GPT):
 
 @torch.no_grad()
 def generate(model: GPT, prompt_ids: torch.Tensor, *, max_new_tokens: int = 100, window_blocks: int = 64):
+    """Greedy decoding that keeps the *context* (not the growing sequence) length
+    a multiple of 128 for FlexAttention without polluting the generated output
+    with tons of <|endoftext|> tokens.
+    """
     device = prompt_ids.device
     ids = prompt_ids.clone()
 
     for _ in range(max_new_tokens):
-        # Ensure current context length is multiple of BLOCK_SIZE.
-        pad_left = (-len(ids)) % BLOCK_SIZE
-        if pad_left:
-            ids = torch.cat([torch.full((pad_left,), EOS_ID, dtype=ids.dtype, device=device), ids])
+        # Use only the recent MAX_SEQ_LEN tokens as context
+        ctx = ids[-MAX_SEQ_LEN:]
 
-        # Truncate to training context window
-        context = ids[-MAX_SEQ_LEN:]
+        # Pad **a COPY** of the context on the *left* so its length is a multiple
+        # of 128, but **do not** add that padding back into the growing `ids`.
+        pad_ctx = (-len(ctx)) % BLOCK_SIZE
+        if pad_ctx:
+            ctx = torch.cat([
+                torch.full((pad_ctx,), EOS_ID, dtype=ids.dtype, device=device),
+                ctx,
+            ])
+
         num_blocks = torch.tensor(window_blocks, dtype=torch.int32, device=device)
+        logits = model(ctx, target_seq=None, sliding_window_num_blocks=num_blocks)
+        if logits.dim() == 3:
+            logits = logits.squeeze(0)  # [T, V]
 
-        logits = model(context, target_seq=None, sliding_window_num_blocks=num_blocks)
-        if logits.dim() == 3:  # [1, T, V]
-            logits = logits.squeeze(0)
         next_tok = torch.argmax(logits[-1], dim=-1).to(torch.int32)
         ids = torch.cat([ids, next_tok.view(1)])
         if next_tok.item() == EOS_ID:
